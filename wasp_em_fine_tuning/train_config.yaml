@@ -1,0 +1,40 @@
+train_data_config:
+  data_files:
+    sp3_vol_01700:
+      image:
+        path: "../wasp_data/vol_01700/img.h5"
+        dataset: "main"
+      label:
+        path: "../wasp_data/vol_01700/label_v3_filled.h5"
+        dataset: "main"
+    sp3_vol_03700:
+      image:
+        path: "../wasp_data/vol_03700/img.h5"
+        dataset: "main"
+      label:
+        path: "../wasp_data/vol_03700/label_v3_filled.h5"
+        dataset: "main"
+  patch_size: [256, 256]
+  axis: null
+  rng: "she sells sea shells"
+test_data_config:
+  data_files:
+    sp3_vol_03998:
+      image:
+        path: "../wasp_data/vol_03998/img.h5"
+        dataset: "main"
+      label:
+        path: "../wasp_data/vol_03998/label.h5"
+        dataset: "main"
+  patch_size: [ 256, 256 ]
+  axis: null
+  rng: "by the sea shore"
+sam2_model_size: "small"
+model_checkpoint: "sam2_hiera_small.pt"
+model_cfg: "sam2_hiera_s.yaml"
+batch_size: 4
+num_batches: 1000
+learning_rate: 1.0e-5
+weight_decay: 4.0e-5
+checkpoint_interval: 500
+evaluate_interval: 100
