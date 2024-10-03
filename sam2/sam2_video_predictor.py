@@ -7,6 +7,8 @@
 import warnings
 from collections import OrderedDict
 
+import numpy as np
+from numpy.typing import NDArray
 import torch
 
 from tqdm import tqdm
@@ -40,20 +42,33 @@ class SAM2VideoPredictor(SAM2Base):
     @inference_mode_if_not_training()
     def init_state(
         self,
-        video_path,
+        video_path: str = None,
+        images: NDArray = None,
         offload_video_to_cpu=False,
         offload_state_to_cpu=False,
         async_loading_frames=False,
     ):
         """Initialize an inference state."""
         compute_device = self.device  # device of the model
-        images, video_height, video_width = load_video_frames(
-            video_path=video_path,
-            image_size=self.image_size,
-            offload_video_to_cpu=offload_video_to_cpu,
-            async_loading_frames=async_loading_frames,
-            compute_device=compute_device,
-        )
+        if video_path is not None:
+            images, video_height, video_width = load_video_frames(
+                video_path=video_path,
+                image_size=self.image_size,
+                offload_video_to_cpu=offload_video_to_cpu,
+                async_loading_frames=async_loading_frames,
+                compute_device=compute_device,
+            )
+        elif images is not None:
+            if images.ndim == 3:  # [frame, height, width]
+                images = torch.from_numpy(images[:, :, :, None])
+                images = torch.concatenate([images, images, images], dim=3)
+            # video_data: [frame, height, width, channels]
+            images = images.permute(0, 3, 1, 2)
+            video_height, video_width = images.shape[2:4]
+            if not offload_video_to_cpu:
+                images = images.to(torch.device("cuda"))
+        else:
+            raise ValueError("Video path or data required")
         inference_state = {}
         inference_state["images"] = images
         inference_state["num_frames"] = len(images)
