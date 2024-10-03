@@ -14,6 +14,7 @@ from PIL.Image import Image
 
 from sam2.modeling.sam2_base import SAM2Base
 
+from sam2.utils.training import no_grad_if_not_training
 from sam2.utils.transforms import SAM2Transforms
 
 
@@ -82,7 +83,7 @@ class SAM2ImagePredictor:
         sam_model = build_sam2_hf(model_id, **kwargs)
         return cls(sam_model, **kwargs)
 
-    @torch.no_grad()
+    @no_grad_if_not_training()
     def set_image(
         self,
         image: Union[np.ndarray, Image],
@@ -128,7 +129,7 @@ class SAM2ImagePredictor:
         self._is_image_set = True
         logging.info("Image embeddings computed.")
 
-    @torch.no_grad()
+    @no_grad_if_not_training()
     def set_image_batch(
         self,
         image_list: List[Union[np.ndarray]],
@@ -333,7 +334,7 @@ class SAM2ImagePredictor:
                 mask_input = mask_input[None, :, :, :]
         return mask_input, unnorm_coords, labels, unnorm_box
 
-    @torch.no_grad()
+    @no_grad_if_not_training()
     def _predict(
         self,
         point_coords: Optional[torch.Tensor],

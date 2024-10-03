@@ -31,6 +31,7 @@ from sam2.utils.amg import (
     uncrop_masks,
     uncrop_points,
 )
+from sam2.utils.training import no_grad_if_not_training
 
 
 class SAM2AutomaticMaskGenerator:
@@ -166,7 +167,7 @@ class SAM2AutomaticMaskGenerator:
         sam_model = build_sam2_hf(model_id, **kwargs)
         return cls(sam_model, **kwargs)
 
-    @torch.no_grad()
+    @no_grad_if_not_training()
     def generate(self, image: np.ndarray) -> List[Dict[str, Any]]:
         """
         Generates masks for the given image.
