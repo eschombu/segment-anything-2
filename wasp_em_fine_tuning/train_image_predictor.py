@@ -24,9 +24,9 @@ from tqdm import tqdm
 
 from sam2.build_sam import build_sam2
 from sam2.sam2_image_predictor import SAM2ImagePredictor
-from sam2.utils.training import enable_training, disable_training
 
 from data_utils import SegmentationImageSampler, get_batch_with_prompts
+from train_utils import enable_training, disable_training
 
 RngInitType = int | str | np.random.Generator
 
