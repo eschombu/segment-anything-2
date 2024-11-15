@@ -2,7 +2,7 @@ import os
 import yaml
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass
-from typing import Dict, Iterator, Optional, Self, Tuple, Union
+from typing import Iterator, Self, Sequence
 
 import h5py
 import numpy as np
@@ -12,10 +12,10 @@ from scipy.ndimage import center_of_mass, distance_transform_edt
 
 from sam2.utils.misc import get_connected_components
 
-RngInitType = Union[int, str, np.random.Generator]
+RngInitType = int | str | np.random.Generator
 
 
-def _load_h5_dataset(file, dataset: Union[str, Tuple[str, ...]]):
+def _load_h5_dataset(file, dataset: str | tuple[str, ...]):
     if isinstance(dataset, str):
         dset = file[dataset]
     else:
@@ -25,7 +25,7 @@ def _load_h5_dataset(file, dataset: Union[str, Tuple[str, ...]]):
     return dset
 
 
-def get_rng(rng: Optional[RngInitType] = None) -> np.random.Generator:
+def get_rng(rng: RngInitType | None = None) -> np.random.Generator:
     if isinstance(rng, np.random.Generator):
         rng = rng
     else:
@@ -38,10 +38,10 @@ def get_rng(rng: Optional[RngInitType] = None) -> np.random.Generator:
 @dataclass
 class HDF5DataIndex:
     path: str
-    dataset: Union[str, Tuple[str, ...]]
-    frame_axis: Optional[int] = None
-    slice: Optional[tuple] = None
-    shape: Optional[tuple] = None
+    dataset: str | tuple[str, ...]
+    frame_axis: int | None = None
+    slice: tuple | None = None
+    shape: tuple | None = None
 
     def load(self) -> NDArray:
         with h5py.File(self.path, 'r') as f:
@@ -60,7 +60,7 @@ class HDF5DataIndex:
         return data
 
 
-def _int_slice(slc) -> Optional[int]:
+def _int_slice(slc) -> int | None:
     if isinstance(slc, slice):
         step = slc.step if slc.step is not None else 1
         n = (slc.stop - slc.start) // step
@@ -105,16 +105,16 @@ class SegmentationDataIndex:
 class SegmentationDataIndexer(ABC):
     def __init__(
             self,
-            data_files: Dict[str, SegmentationDataIndex],
-            axis: Optional[int] = None,
+            data_files: dict[str, SegmentationDataIndex],
+            axis: int | None = None,
     ):
         self.data_files = data_files
         self.axis = axis
-        self.image_shapes: Dict[str, Tuple[int, int, int]] = {}
+        self.image_shapes: dict[str, tuple[int, int, int]] = {}
         self._build_indexer_data()
 
     @classmethod
-    def from_config(cls, config: Union[dict, str], **kwargs):
+    def from_config(cls, config: dict | str, **kwargs):
         if isinstance(config, str):
             if os.path.exists(config):
                 with open(config) as f:
@@ -152,7 +152,7 @@ class SegmentationDataIndexer(ABC):
             # Add slices for image patches or whole images, along each axis
             self.image_shapes[key] = image_shape
 
-    def subset(self, volumes: Union[str, list], **kwargs) -> Self:
+    def subset(self, volumes: str | list, **kwargs) -> Self:
         if isinstance(volumes, str):
             volumes = [volumes]
         data_files = {k: v for k, v in self.data_files.items() if k in volumes}
@@ -165,7 +165,7 @@ class SegmentationDataIndexer(ABC):
         pass
 
 
-def _resolve_index(index, size) -> Union[int, Tuple[int, ...]]:
+def _resolve_index(index, size) -> int | tuple[int, ...]:
     try:
         index = int(index)
         if index < 0:
@@ -184,9 +184,9 @@ class SegmentationVideoIndexer(SegmentationDataIndexer):
             volume_key: str,
             frame_start: int,
             frame_end: int,
-            patch_start: Optional[Tuple[int, int]] = None,
-            patch_end: Optional[Tuple[int, int]] = None,
-            axis: Optional[int] = None,
+            patch_start: tuple[int, int] | None = None,
+            patch_end: tuple[int, int] | None = None,
+            axis: int | None = None,
     ) -> SegmentationDataIndex:
         if axis is None:
             if self.axis is None:
@@ -232,11 +232,11 @@ class SegmentationVideoIndexer(SegmentationDataIndexer):
 class SegmentationVideoSampler(SegmentationVideoIndexer):
     def __init__(
             self,
-            data_files: Dict[str, SegmentationDataIndex],
-            axis: Optional[int] = None,
-            num_frames: Optional[int] = None,
-            patch_size: Tuple[int, int] = None,
-            rng: Optional[RngInitType] = None,
+            data_files: dict[str, SegmentationDataIndex],
+            axis: int | None = None,
+            num_frames: int | None = None,
+            patch_size: tuple[int, int] = None,
+            rng: RngInitType | None = None,
     ):
         super().__init__(data_files=data_files, axis=axis)
         self.num_frames = num_frames
@@ -257,7 +257,7 @@ class SegmentationVideoSampler(SegmentationVideoIndexer):
             rng=config.get("rng"),
         )
 
-    def subset(self, volumes: Union[str, list], **kwargs) -> Self:
+    def subset(self, volumes: str | list, **kwargs) -> Self:
         if isinstance(volumes, str):
             volumes = [volumes]
         data_files = {k: v for k, v in self.data_files.items() if k in volumes}
@@ -267,10 +267,10 @@ class SegmentationVideoSampler(SegmentationVideoIndexer):
 
     def get_sample(
             self,
-            volume_key: Optional[str] = None,
-            frame_start: Optional[int] = None,
-            patch_start: Optional[Tuple[int, int]] = None,
-            axis: Optional[int] = None,
+            volume_key: str | None = None,
+            frame_start: int | None = None,
+            patch_start: tuple[int, int] | None = None,
+            axis: int | None = None,
     ) -> SegmentationDataIndex:
         if axis is None:
             axis = self.axis if self.axis is not None else self.rng.choice(3)
@@ -315,9 +315,9 @@ class SegmentationImageIndexer(SegmentationVideoIndexer):
             self,
             volume_key: str,
             frame_index: int,
-            patch_start: Optional[Tuple[int, int]] = None,
-            patch_end: Optional[Tuple[int, int]] = None,
-            axis: Optional[int] = None,
+            patch_start: tuple[int, int] | None = None,
+            patch_end: tuple[int, int] | None = None,
+            axis: int | None = None,
             frame_end: int = None,
     ) -> SegmentationDataIndex:
         if frame_end is None:
@@ -328,10 +328,10 @@ class SegmentationImageIndexer(SegmentationVideoIndexer):
 class SegmentationImageSampler(SegmentationVideoSampler):
     def __init__(
             self,
-            data_files: Dict[str, SegmentationDataIndex],
-            axis: Optional[int] = None,
-            patch_size: Optional[Tuple[int, int]] = None,
-            rng: Optional[RngInitType] = None,
+            data_files: dict[str, SegmentationDataIndex],
+            axis: int | None = None,
+            patch_size: tuple[int, int] | None = None,
+            rng: RngInitType | None = None,
             num_frames: int = 1,
     ):
         super().__init__(data_files=data_files, axis=axis, num_frames=num_frames, patch_size=patch_size, rng=rng)
@@ -349,7 +349,7 @@ class SegmentationImageSampler(SegmentationVideoSampler):
             rng=config.get("rng"),
         )
 
-    def subset(self, volumes: Union[str, list], **kwargs) -> Self:
+    def subset(self, volumes: str | list, **kwargs) -> Self:
         if isinstance(volumes, str):
             volumes = [volumes]
         data_files = {k: v for k, v in self.data_files.items() if k in volumes}
@@ -359,23 +359,23 @@ class SegmentationImageSampler(SegmentationVideoSampler):
 
     def get_sample(
             self,
-            volume_key: Optional[str] = None,
-            frame_idx: Optional[int] = None,
-            patch_start: Optional[Tuple[int, int]] = None,
-            axis: Optional[int] = None,
+            volume_key: str | None = None,
+            frame_idx: int | None = None,
+            patch_start: tuple[int, int] | None = None,
+            axis: int | None = None,
     ) -> SegmentationDataIndex:
         return super().get_sample(volume_key, frame_idx, patch_start, axis)
 
 
 def read_single_image(
         data_indexer: SegmentationImageSampler,
-        exclude_background: Optional[Union[int, bool]] = 0,
-        rng: Optional[RngInitType] = None,
-        retry_limit: Optional[int] = 10,
+        exclude_background: int | bool | None = 0,
+        rng: RngInitType | None = None,
+        retry_limit: int | None = 10,
         retry_counter: int = 0,
-        min_size: Optional[Union[int, float]] = None,
-        max_size: Optional[Union[int, float]] = None,
-        min_distance_from_edge: Optional[Union[int, float]] = 0.05,
+        min_size: int | float | None = None,
+        max_size: int | float | None = None,
+        min_distance_from_edge: int | float | None = 0.05,
 ):
     if rng is None:
         rng = data_indexer.rng
@@ -450,7 +450,7 @@ def read_single_image(
 
 
 
-def get_point_prompt(mask: NDArray, num_points: int = 1, sample_mode="edt", rng: Optional[RngInitType] = None):
+def get_point_prompt(mask: NDArray, num_points: int = 1, sample_mode="edt", rng: RngInitType | None = None):
     rng = get_rng(rng)
     coords = np.argwhere(mask)  # get all coordinates in mask
 
@@ -476,9 +476,9 @@ def get_point_prompt(mask: NDArray, num_points: int = 1, sample_mode="edt", rng:
 def get_batch_with_prompts(
         data_indexer: SegmentationImageSampler,
         batch_size: int = 4,
-        exclude_background: Optional[Union[int, bool]] = 0,
-        rng: Optional[RngInitType] = None,
-        retry_limit: Optional[int] = 10,
+        exclude_background: int | bool | None = 0,
+        rng: RngInitType | None = None,
+        retry_limit: int | None = 10,
 ):
     if rng is None:
         rng = data_indexer.rng
@@ -500,7 +500,7 @@ def get_batch_with_prompts(
     return images, np.array(masks), np.array(prompt_points), np.ones([batch_size, 1]), data_files
 
 
-def parse_data_files(config: dict) -> Dict[str, SegmentationDataIndex]:
+def parse_data_files(config: dict) -> dict[str, SegmentationDataIndex]:
     data_files = {}
     for key, data_cfg in config["data_files"].items():
         image = HDF5DataIndex(data_cfg["image"]["path"], data_cfg["image"]["dataset"])

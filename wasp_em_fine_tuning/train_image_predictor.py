@@ -13,7 +13,7 @@ import yaml
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Iterator, Optional, Self, Tuple, Union
+from typing import Self
 from warnings import warn
 
 import matplotlib.pyplot as plt
@@ -28,7 +28,7 @@ from sam2.utils.training import enable_training, disable_training
 
 from data_utils import SegmentationImageSampler, get_batch_with_prompts
 
-RngInitType = Union[int, str, np.random.Generator]
+RngInitType = int | str | np.random.Generator
 
 this_dir = Path(__file__).resolve().parent
 checkpoint_dir = this_dir.parent / "checkpoints"
@@ -47,7 +47,7 @@ class ModelSpec:
     config: str
 
     @staticmethod
-    def _get_model_size_from_checkpoint(model_ckpt: str) -> Optional[str]:
+    def _get_model_size_from_checkpoint(model_ckpt: str) -> str | None:
         size_options = ["tiny", "small", "base", "large"]
         ckpt_split = os.path.splitext(model_ckpt)[0].split("_")
         for size in size_options:
