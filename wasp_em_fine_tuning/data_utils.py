@@ -52,6 +52,7 @@ class HDF5DataIndex:
                 data = dset[...]
         data = np.asarray(data)
         if data.ndim > 2 and self.frame_axis is not None:
+            assert data.ndim == 3
             axes_order = [0, 1, 2]
             axes_order = [self.frame_axis] + axes_order[:self.frame_axis] + axes_order[(self.frame_axis + 1):]
             data = np.permute_dims(data, axes=axes_order)
@@ -323,6 +324,17 @@ class SegmentationImageIndexer(SegmentationVideoIndexer):
         if frame_end is None:
             frame_end = frame_index + 1
         return super().get_index(volume_key, frame_index, frame_end, patch_start, patch_end, axis)
+
+    def get_frames_through_point(
+            self,
+            volume_key: str,
+            point: tuple[int, int, int],
+    ) -> tuple[tuple[SegmentationDataIndex, tuple[int, int]], ...]:
+        frames = []
+        for axis, frame_idx in enumerate(point):
+            frame_coord = point[:axis] + point[axis+1:]
+            frames.append((self.get_index(volume_key, frame_idx, axis=axis), frame_coord))
+        return tuple(frames)
 
 
 class SegmentationImageSampler(SegmentationVideoSampler):
