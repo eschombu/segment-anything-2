@@ -61,13 +61,14 @@ class HDF5DataIndex:
         return data
 
 
-def _int_slice(slc) -> int | None:
+def _int_slice(slc) -> int:
     if isinstance(slc, slice):
         step = slc.step if slc.step is not None else 1
         n = (slc.stop - slc.start) // step
         if n > 1:
             raise ValueError(f"Not a singular-value slice: {slc}")
         else:
+            assert slc.start is not None
             return slc.start
     else:
         return int(slc)
@@ -100,7 +101,7 @@ class SegmentationDataIndex:
         image_params["slice"] = new_slice
         label_params = asdict(frame_index.label)
         label_params["slice"] = new_slice
-        return SegmentationDataIndex(HDF5DataIndex(**image_params), HDF5DataIndex(**label_params))
+        return cls(HDF5DataIndex(**image_params), HDF5DataIndex(**label_params))
 
 
 class SegmentationDataIndexer(ABC):
