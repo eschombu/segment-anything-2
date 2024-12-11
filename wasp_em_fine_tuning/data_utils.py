@@ -4,15 +4,27 @@ from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass
 from typing import Iterator, Self, Sequence
 
+import cv2
 import h5py
 import numpy as np
 import torch
-from numpy.typing import NDArray
+from numpy.typing import ArrayLike
 from scipy.ndimage import center_of_mass, distance_transform_edt
 
 from sam2.utils.misc import get_connected_components
+from sam2.utils.transforms import SAM2Transforms
 
 RngInitType = int | str | np.random.Generator
+
+
+def _get_config(config: dict | str) -> dict:
+    if isinstance(config, str):
+        if os.path.exists(config):
+            with open(config) as f:
+                config = yaml.safe_load(f)
+        else:
+            config = yaml.safe_load(config)
+    return config
 
 
 def _load_h5_dataset(file, dataset: str | tuple[str, ...]):
@@ -35,6 +47,35 @@ def get_rng(rng: RngInitType | None = None) -> np.random.Generator:
     return rng
 
 
+def to_rgb(image: ArrayLike) -> np.ndarray:
+    if image.max() > 1:
+        image = image.astype(float) / 255
+    if image.shape[-1] != 3:
+        image = np.stack([image] * 3, axis=-1)
+    return image
+
+
+class ImagePreprocessor:
+    def __init__(self, transforms: SAM2Transforms | None):
+        self.transforms = transforms
+
+    def __call__(self, image: np.ndarray) -> np.ndarray:
+        if image.ndim == 2 or (image.ndim == 3 and image.shape[0] == image.shape[1] and image.shape[2] == 3):
+            image = image[np.newaxis, ...]
+            is_image = True
+        else:
+            is_image = False
+        if image.ndim == 3:
+            image = to_rgb(image)
+        if self.transforms:
+            frames = [self.transforms(frame).permute(1, 2, 0) for frame in image]
+            if is_image:
+                image = frames[0]
+            else:
+                image = torch.stack(frames)
+        return image
+
+
 @dataclass
 class HDF5DataIndex:
     path: str
@@ -42,8 +83,9 @@ class HDF5DataIndex:
     frame_axis: int | None = None
     slice: tuple | None = None
     shape: tuple | None = None
+    preprocessor: ImagePreprocessor | None = None
 
-    def load(self) -> NDArray:
+    def load(self, preprocess=True) -> np.ndarray:
         with h5py.File(self.path, 'r') as f:
             dset = _load_h5_dataset(f, self.dataset)
             if self.slice is not None:
@@ -58,6 +100,8 @@ class HDF5DataIndex:
             data = np.permute_dims(data, axes=axes_order)
             if data.shape[0] == 1:
                 data = data[0]
+        if preprocess and self.preprocessor:
+            data = self.preprocessor(data)
         return data
 
 
@@ -109,20 +153,17 @@ class SegmentationDataIndexer(ABC):
             self,
             data_files: dict[str, SegmentationDataIndex],
             axis: int | None = None,
+            preprocessor: ImagePreprocessor | None = None,
     ):
         self.data_files = data_files
         self.axis = axis
         self.image_shapes: dict[str, tuple[int, int, int]] = {}
+        self.preprocessor = preprocessor
         self._build_indexer_data()
 
     @classmethod
     def from_config(cls, config: dict | str, **kwargs):
-        if isinstance(config, str):
-            if os.path.exists(config):
-                with open(config) as f:
-                    config = yaml.safe_load(f)
-            else:
-                config = yaml.safe_load(config)
+        config = _get_config(config)
         if kwargs:
             config = config.copy()
             config.update(kwargs)
@@ -130,6 +171,7 @@ class SegmentationDataIndexer(ABC):
         return cls(
             data_files,
             axis=config.get("axis"),
+            preprocessor=config.get("preprocessor"),
         )
 
     def __repr__(self):
@@ -163,8 +205,13 @@ class SegmentationDataIndexer(ABC):
         return type(self)(data_files, **params)
 
     @abstractmethod
-    def get_index(self, *args, **kwargs) -> SegmentationDataIndex:
+    def _get_index(self, *args, **kwargs) -> SegmentationDataIndex:
         pass
+
+    def get_index(self, *args, **kwargs):
+        index = self._get_index(*args, **kwargs)
+        index.image.preprocessor = self.preprocessor
+        return index
 
 
 def _resolve_index(index, size) -> int | tuple[int, ...]:
@@ -181,7 +228,7 @@ def _resolve_index(index, size) -> int | tuple[int, ...]:
 
 
 class SegmentationVideoIndexer(SegmentationDataIndexer):
-    def get_index(
+    def _get_index(
             self,
             volume_key: str,
             frame_start: int,
@@ -236,17 +283,19 @@ class SegmentationVideoSampler(SegmentationVideoIndexer):
             self,
             data_files: dict[str, SegmentationDataIndex],
             axis: int | None = None,
+            preprocessor: ImagePreprocessor | None = None,
             num_frames: int | None = None,
             patch_size: tuple[int, int] = None,
             rng: RngInitType | None = None,
     ):
-        super().__init__(data_files=data_files, axis=axis)
+        super().__init__(data_files=data_files, axis=axis, preprocessor=preprocessor)
         self.num_frames = num_frames
         self.patch_size = patch_size
         self.rng = get_rng(rng)
 
     @classmethod
-    def from_config(cls, config: dict, **kwargs):
+    def from_config(cls, config: dict | str, **kwargs):
+        config = _get_config(config)
         if kwargs:
             config = config.copy()
             config.update(kwargs)
@@ -254,6 +303,7 @@ class SegmentationVideoSampler(SegmentationVideoIndexer):
         return cls(
             data_files,
             axis=config.get("axis"),
+            preprocessor=config.get("preprocessor"),
             num_frames=config.get("num_frames"),
             patch_size=config.get("patch_size"),
             rng=config.get("rng"),
@@ -313,7 +363,7 @@ class SegmentationVideoSampler(SegmentationVideoIndexer):
 
 
 class SegmentationImageIndexer(SegmentationVideoIndexer):
-    def get_index(
+    def _get_index(
             self,
             volume_key: str,
             frame_index: int,
@@ -343,14 +393,23 @@ class SegmentationImageSampler(SegmentationVideoSampler):
             self,
             data_files: dict[str, SegmentationDataIndex],
             axis: int | None = None,
+            preprocessor: ImagePreprocessor | None = None,
             patch_size: tuple[int, int] | None = None,
             rng: RngInitType | None = None,
             num_frames: int = 1,
     ):
-        super().__init__(data_files=data_files, axis=axis, num_frames=num_frames, patch_size=patch_size, rng=rng)
+        super().__init__(
+            data_files=data_files,
+            axis=axis,
+            preprocessor=preprocessor,
+            num_frames=num_frames,
+            patch_size=patch_size,
+            rng=rng,
+        )
 
     @classmethod
-    def from_config(cls, config: dict, **kwargs):
+    def from_config(cls, config: dict | str, **kwargs):
+        config = _get_config(config)
         if kwargs:
             config = config.copy()
             config.update(kwargs)
@@ -358,6 +417,7 @@ class SegmentationImageSampler(SegmentationVideoSampler):
         return cls(
             data_files,
             axis=config.get("axis"),
+            preprocessor=config.get("preprocessor"),
             patch_size=config.get("patch_size"),
             rng=config.get("rng"),
         )
@@ -463,7 +523,7 @@ def read_single_image(
 
 
 
-def get_point_prompt(mask: NDArray, num_points: int = 1, sample_mode="edt", rng: RngInitType | None = None):
+def get_point_prompt(mask: np.ndarray, num_points: int = 1, sample_mode="edt", rng: RngInitType | None = None):
     rng = get_rng(rng)
     coords = np.argwhere(mask)  # get all coordinates in mask
 
@@ -479,7 +539,7 @@ def get_point_prompt(mask: NDArray, num_points: int = 1, sample_mode="edt", rng:
     return yx[:, ::-1]  # convert to (x, y) format
 
 
-# def get_box_prompt(mask: NDArray, buffer: int = 0) -> NDArray:
+# def get_box_prompt(mask: np.ndarray, buffer: int = 0) -> np.ndarray:
 #     coords = np.argwhere(mask > 0)  # get all coordinates in mask
 #     min_y, min_x = coords.min(axis=0)
 #     max_y, max_x = coords.max(axis=0)
@@ -520,3 +580,14 @@ def parse_data_files(config: dict) -> dict[str, SegmentationDataIndex]:
         label = HDF5DataIndex(data_cfg["label"]["path"], data_cfg["label"]["dataset"])
         data_files[key] = SegmentationDataIndex(image, label)
     return data_files
+
+
+def postprocess_mask_logits(mask, resolution: int | None = None):
+    if mask.ndim == 3:
+        mask = mask[0]
+    mask = (mask > 0.0).cpu().numpy().astype(float) * 255
+    if resolution:
+        mask = cv2.resize(mask, [resolution, resolution])
+    mask[mask > 0] = 1
+    mask = mask.astype(bool)
+    return mask
