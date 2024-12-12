@@ -2,7 +2,8 @@ import os
 import yaml
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass
-from typing import Iterator, Self, Sequence
+from functools import cached_property
+from typing import Callable, Iterator, Self
 
 import cv2
 import h5py
@@ -591,3 +592,99 @@ def postprocess_mask_logits(mask, resolution: int | None = None):
     mask[mask > 0] = 1
     mask = mask.astype(bool)
     return mask
+
+
+# This class is pasted from another package of mine, may want to set that other package as a dependency and import it
+class OneToOneMap(dict):
+    def __init__(self, *args, inverse=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if inverse is not None:
+            self.inverse = inverse
+        else:
+            self.inverse = None
+            self.validate()
+
+    def validate(self):
+        if len(set(self.values())) != len(self.keys()):
+            raise ValueError('One-to-one mapping constraint violated')
+        if self.inverse is None:
+            self.inverse = OneToOneMap(((v, k) for k, v in self.items()), inverse=self)
+        if self.inverse.inverse is not self:
+            raise ValueError('Inverse mapping does not point back to original')
+
+    def __setitem__(self, key, value):
+        current_val = self.pop(key, None)
+        if current_val != value:
+            self.inverse.pop(current_val, None)
+        super().__setitem__(key, value)
+        super(self.inverse.__class__, self.inverse).__setitem__(value, key)
+        self.validate()
+        self.inverse.validate()
+
+    def update(self, m, /, **kwargs):
+        d = dict(m, **kwargs)
+        for k, v in d.items():
+            self[k] = v
+
+
+def iou(mask1: np.ndarray, mask2: np.ndarray) -> float:
+    intersection = np.logical_and(mask1, mask2).sum()
+    union = np.logical_or(mask1, mask2).sum()
+    return intersection / union if union > 0 else 0.0
+
+
+def dice(mask1: np.ndarray, mask2: np.ndarray) -> float:
+    intersection = np.logical_and(mask1, mask2).sum()
+    return 2 * intersection / (mask1.sum() + mask2.sum())
+
+
+def match_gt_pred_masks(
+        gt_labels: np.ndarray,
+        pred_labels: np.ndarray,
+        match_fn: str | Callable = 'iou',
+        match_threshold: float = None,
+) -> OneToOneMap:
+    if isinstance(match_fn, str):
+        if match_fn == 'iou':
+            match_fn = iou
+        elif match_fn == 'dice':
+            match_fn = dice
+        else:
+            raise ValueError(f"Invalid match mode: {match_fn}")
+
+    remaining_gt_ids = set(np.unique(gt_labels))
+    remaining_pred_ids = set(np.unique(pred_labels))
+
+    remaining_gt_ids.discard(0)
+    remaining_pred_ids.discard(0)
+
+    gt_pred_map = OneToOneMap()
+    while remaining_gt_ids and remaining_pred_ids:
+        gt_id = remaining_gt_ids.pop()
+        gt_mask = (gt_labels == gt_id)
+        candidate_pred_ids = set(np.unique(pred_labels[gt_mask])).intersection(remaining_pred_ids)
+        best_score = None
+        best_id = None
+        for pred_id in candidate_pred_ids:
+            pred_mask = (pred_labels == pred_id)
+            pred_score = match_fn(gt_mask, pred_mask)
+            if match_threshold and pred_score < match_threshold:
+                continue
+            alt_gt_ids = set(np.unique(gt_labels[pred_mask])).intersection(remaining_gt_ids)
+            alt_scores = [match_fn(gt_labels == alt_gt_id, pred_mask) for alt_gt_id in alt_gt_ids]
+            if alt_scores and max(alt_scores) > pred_score:
+                continue
+            if best_score is None or pred_score > best_score:
+                best_score = pred_score
+                best_id = pred_id
+        if best_id is not None:
+            pred_mask = (pred_labels == best_id)
+            alt_gt_ids = set(np.unique(gt_labels[pred_mask])).intersection(remaining_gt_ids)
+            alt_scores = [match_fn(gt_labels == alt_gt_id, pred_mask) for alt_gt_id in alt_gt_ids]
+            if alt_scores and max(alt_scores) > best_score:
+                remaining_gt_ids.add(gt_id)
+            else:
+                gt_pred_map[gt_id] = best_id
+                remaining_pred_ids.remove(best_id)
+
+    return gt_pred_map
